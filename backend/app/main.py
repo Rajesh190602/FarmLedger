@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy import select
 
-from app.database import Base, engine, SessionLocal
+from app.database import  SessionLocal
 from app.core.config import settings
 from app.models import Crop, LabourActivity
 from app.api.routes import router
@@ -62,7 +62,6 @@ SEED_LABOUR_ACTIVITIES = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
 
     with SessionLocal() as db:
         for en, te in SEED_CROPS:
