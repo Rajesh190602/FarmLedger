@@ -1,35 +1,72 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func
 from app.database import get_db
+from app.core.rate_limit import limiter
+from sqlalchemy.exc import IntegrityError
 from app.api.deps import get_current_user
 from app.models import User, Farm, Crop, CropSeason, LabourActivity, Worker, WageRate, LabourEntry, LabourEntryWorker, FarmExpense, CropSale, FieldOperation, CropYield
 from app.schemas.schemas import RegisterIn, LoginIn, TokenOut, UserOut, FarmCreate, FarmUpdate, FarmOut, CropOut, CropSeasonCreate, CropSeasonUpdate, CropSeasonOut, DashboardOut, WorkerCreate, WorkerOut, LabourActivityOut, WageRateIn, WageRateOut, LabourEntryCreate, LabourEntryOut, LabourSummaryOut, ExpenseCreate, ExpenseOut, ExpenseSeasonSummaryOut,LabourEntryUpdate, ExpenseSummaryOut, SaleCreate, SaleOut, SaleSeasonSummaryOut, SalesSummaryOut, ProfitabilitySeasonOut, ProfitabilitySummaryOut, FieldOperationCreate, FieldOperationOut, CropYieldUpsert, CropYieldOut, CropYieldSummaryOut
 from app.core.security import hash_password, verify_password, create_access_token
 
 router = APIRouter()
-
 @router.post("/auth/register", response_model=TokenOut, status_code=201)
-def register(payload: RegisterIn, db: Session = Depends(get_db)):
+@limiter.limit("5/10minutes")
+def register(
+    request: Request,
+    payload: RegisterIn,
+    db: Session = Depends(get_db),
+):
     if payload.preferred_language not in ("en", "te"):
         raise HTTPException(400, "Language must be en or te")
+
     if db.scalar(select(User).where(User.mobile == payload.mobile)):
         raise HTTPException(409, "Mobile number is already registered")
+
     if payload.email and db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(409, "Email is already registered")
-    user = User(**payload.model_dump(exclude={"password"}), password_hash=hash_password(payload.password))
-    db.add(user); db.commit(); db.refresh(user)
-    return TokenOut(access_token=create_access_token(str(user.id)), user=user)
 
-@router.post("/auth/login", response_model=TokenOut)
-def login(payload: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.mobile == payload.mobile))
-    if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Incorrect mobile number or password")
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is disabled")
-    return TokenOut(access_token=create_access_token(str(user.id)), user=user)
+    user = User(
+        **payload.model_dump(exclude={"password"}),
+        password_hash=hash_password(payload.password)
+    )
+
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Mobile number or email is already registered"
+        )
+
+    except Exception:
+        db.rollback()
+        raise
+
+    return TokenOut(
+        access_token=create_access_token(str(user.id)),
+        user=user
+    )
+
+
+    @router.post("/auth/login", response_model=TokenOut)
+    @limiter.limit("5/minute")
+    def login(
+        request: Request,
+        payload: LoginIn,
+        db: Session = Depends(get_db),
+    ):
+        user = db.scalar(select(User).where(User.mobile == payload.mobile))
+        if not user or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Incorrect mobile number or password")
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account is disabled")
+        return TokenOut(access_token=create_access_token(str(user.id)), user=user)
 
 @router.get("/auth/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
@@ -442,7 +479,11 @@ def expense_season_summary(db: Session = Depends(get_db), user: User = Depends(g
         .join(CropSeason, FarmExpense.crop_season_id == CropSeason.id)
         .join(Crop, CropSeason.crop_id == Crop.id)
         .join(Farm, CropSeason.farm_id == Farm.id)
-        .where(FarmExpense.owner_id == user.id)
+        .where(
+            FarmExpense.owner_id == user.id,
+            CropSeason.owner_id == user.id,
+            Farm.owner_id == user.id,
+        )
         .order_by(CropSeason.season, CropSeason.id)
     ).all()
     grouped = {}

@@ -7,6 +7,9 @@ ALGORITHM = "HS256"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Password cannot exceed 72 UTF-8 bytes")
+
     return pwd_context.hash(password)
 
 def verify_password(password: str, hashed: str) -> bool:

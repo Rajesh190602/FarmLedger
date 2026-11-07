@@ -1,22 +1,37 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, EmailStr
-
+from pydantic import BaseModel, ConfigDict, Field, EmailStr,field_validator
 
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     mobile: str = Field(min_length=10, max_length=20)
     email: EmailStr | None = None
-    password: str = Field(min_length=8, max_length=72)
+    password: str = Field(min_length=8)
+
     preferred_language: str = "en"
     village: str | None = None
     district: str | None = None
     state: str = "Telangana"
 
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password cannot exceed 72 UTF-8 bytes")
+        return value
+
 
 class LoginIn(BaseModel):
     mobile: str
     password: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Invalid password length")
+        return value
+
 
 
 class UserOut(BaseModel):
