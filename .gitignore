@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# FarmLedger database backups
+*-backup-*.db
+*-restore-test.db
+
+# Python logs
+*.log
+
+# Node / React
+node_modules/
+dist/
+build/
+.vite/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Local development files
+*.local
+
+# FarmLedger development backups
+backend/app/*.backup-*
+backend/phase3-backup/
+frontend/src/*-before-*.jsx
+frontend/src/*-before-*.js
+
+# Additional FarmLedger historical backups
+backend/app/**/*.backup-*
+frontend/src/*.before-*.jsx
+frontend/src/*-before-*.jsx
+frontend/src/*-before-*.js
+
+frontend/src/i18n/*-before-*.js
