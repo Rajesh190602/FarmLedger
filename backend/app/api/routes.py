@@ -47,26 +47,43 @@ def register(
     except Exception:
         db.rollback()
         raise
-
     return TokenOut(
         access_token=create_access_token(str(user.id)),
         user=user
     )
 
 
-    @router.post("/auth/login", response_model=TokenOut)
-    @limiter.limit("5/minute")
-    def login(
-        request: Request,
-        payload: LoginIn,
-        db: Session = Depends(get_db),
+@router.post("/auth/login", response_model=TokenOut)
+@limiter.limit("5/minute")
+def login(
+    request: Request,
+    payload: LoginIn,
+    db: Session = Depends(get_db),
+):
+    user = db.scalar(
+        select(User).where(User.mobile == payload.mobile)
+    )
+
+    if not user or not verify_password(
+        payload.password,
+        user.password_hash
     ):
-        user = db.scalar(select(User).where(User.mobile == payload.mobile))
-        if not user or not verify_password(payload.password, user.password_hash):
-            raise HTTPException(status_code=401, detail="Incorrect mobile number or password")
-        if not user.is_active:
-            raise HTTPException(status_code=403, detail="Account is disabled")
-        return TokenOut(access_token=create_access_token(str(user.id)), user=user)
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect mobile number or password"
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=403,
+            detail="Account is disabled"
+        )
+
+    return TokenOut(
+        access_token=create_access_token(str(user.id)),
+        user=user
+    )
+
 
 @router.get("/auth/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
