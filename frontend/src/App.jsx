@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import {
   Sprout,
@@ -2614,6 +2614,16 @@ function LabourPage({ t }) {
   const [selectedWorkerId, setSelectedWorkerId] =
     useState(null);
 
+  const [paymentAssignment, setPaymentAssignment] = useState(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(
+    new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 10)
+  );
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentRemarks, setPaymentRemarks] = useState('');
+
   const [form, setForm] = useState({
     crop_season_id: '',
     activity_id: '',
@@ -2878,6 +2888,63 @@ function LabourPage({ t }) {
     }
   };
 
+  const openPayment = (assignment) => {
+    const remaining = Math.max(
+      Number(assignment.total_wage || 0) - Number(assignment.paid_amount || 0),
+      0
+    );
+    if (remaining <= 0) return;
+    setPaymentAssignment(assignment);
+    setPaymentAmount('');
+    setPaymentDate(
+      new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 10)
+    );
+    setPaymentMethod('cash');
+    setPaymentRemarks('');
+    setError('');
+  };
+
+  const cancelPayment = () => {
+    setPaymentAssignment(null);
+    setPaymentAmount('');
+    setPaymentRemarks('');
+  };
+
+  const savePayment = async (e) => {
+    e.preventDefault();
+    if (!paymentAssignment) return;
+    setError('');
+    setNotice('');
+    const amount = Number(paymentAmount);
+    const remaining = Math.max(
+      Number(paymentAssignment.total_wage || 0) - Number(paymentAssignment.paid_amount || 0),
+      0
+    );
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError(t.paymentAmountInvalid || 'Enter a valid payment amount.');
+      return;
+    }
+    if (amount > remaining + 0.000001) {
+      setError(t.paymentCannotExceedRemaining || 'Payment cannot exceed the remaining amount.');
+      return;
+    }
+    try {
+      await api.post(`/labour/assignments/${paymentAssignment.id}/payment`, {
+        amount,
+        payment_date: paymentDate,
+        payment_method: paymentMethod,
+        remarks: paymentRemarks.trim() || null
+      });
+      cancelPayment();
+      setNotice(t.paymentRecorded || 'Payment recorded successfully.');
+      await load();
+    } catch (err) {
+      setError(apiErrorMessage(err, t.error));
+    }
+  };
+
   const editWageRate = (rate) => {
     setEditingRateId(rate.id);
     setRateForm({
@@ -2977,6 +3044,15 @@ function LabourPage({ t }) {
         ),
       0
     );
+
+  const workerHistoryPaid = workerHistory.reduce(
+    (sum, item) => sum + Number(item.a.paid_amount || 0),
+    0
+  );
+  const workerHistoryRemaining = Math.max(
+    workerHistoryTotal - workerHistoryPaid,
+    0
+  );
 
   const workerHistoryDays =
     workerHistory.reduce(
@@ -3610,6 +3686,16 @@ function LabourPage({ t }) {
                         <small>
                           {days} {t.days}
                         </small>
+                        <small>
+                          {t.remaining || 'Remaining'}: {currency(
+                            entries.reduce((sum, e) => sum +
+                              (e.worker_assignments || [])
+                                .filter((a) => a.worker_id === w.id)
+                                .reduce((x, a) => x + Math.max(
+                                  Number(a.total_wage || 0) - Number(a.paid_amount || 0), 0
+                                ), 0), 0)
+                          )}
+                        </small>
                       </span>
                     </button>
 
@@ -3656,6 +3742,16 @@ function LabourPage({ t }) {
                 </div>
 
                 <div>
+                  <b>{currency(workerHistoryPaid)}</b>
+                  <small>{t.totalPaid || 'Total paid'}</small>
+                </div>
+
+                <div>
+                  <b>{currency(workerHistoryRemaining)}</b>
+                  <small>{t.remaining || 'Remaining'}</small>
+                </div>
+
+                <div>
                   <b>
                     {workerHistoryDays}
                   </b>
@@ -3681,73 +3777,93 @@ function LabourPage({ t }) {
                   {t.noWorkerHistory}
                 </div>
               ) : (
-                <div className="table-wrap">
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>{t.date}</th>
-                        <th>{t.crop}</th>
-                        <th>{t.activity}</th>
-                        <th>{t.days}</th>
-                        <th>
-                          {t.dailyWage}
-                        </th>
-                        <th>{t.total}</th>
-                      </tr>
-                    </thead>
-
-                    <tbody>
-                      {workerHistory.map(
-                        ({ entry, a }) => (
-                          <tr
-                            key={`${entry.id}-${a.worker_id}`}
-                          >
-                            <td>
-                              {
-                                entry.work_date
-                              }
-                            </td>
-
-                            <td>
-                              {crops.find(
-                                (c) =>
-                                  c.id ===
-                                  entry.crop_season_id
-                              )?.crop
-                                .name_en ||
-                                '—'}
-                            </td>
-
-                            <td>
-                              {entry
-                                .activity
-                                ?.name_en ||
-                                '—'}
-                            </td>
-
-                            <td>
-                              {a.days}
-                            </td>
-
-                            <td>
-                              {currency(
-                                a.daily_wage_snapshot
-                              )}
-                            </td>
-
-                            <td>
-                              <b>
-                                {currency(
-                                  a.total_wage
-                                )}
-                              </b>
-                            </td>
-                          </tr>
-                        )
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <>
+                  {paymentAssignment && (
+                    <form className="inline-form" onSubmit={savePayment}>
+                      <div>
+                        <b>{t.recordPayment || 'Record payment'}</b>
+                        <p className="muted">
+                          {paymentAssignment.worker_name_snapshot} · {t.remaining || 'Remaining'}: {currency(
+                            Math.max(Number(paymentAssignment.total_wage || 0) - Number(paymentAssignment.paid_amount || 0), 0)
+                          )}
+                        </p>
+                      </div>
+                      <div className="field-row">
+                        <label>
+                          {t.paymentAmount || 'Payment amount'}
+                          <input type="number" min="0.01" step="0.01" required
+                            max={Math.max(Number(paymentAssignment.total_wage || 0) - Number(paymentAssignment.paid_amount || 0), 0)}
+                            value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
+                        </label>
+                        <label>
+                          {t.paymentDate || 'Payment date'}
+                          <input type="date" required value={paymentDate}
+                            onChange={(e) => setPaymentDate(e.target.value)} />
+                        </label>
+                      </div>
+                      <div className="field-row">
+                        <label>
+                          {t.paymentMethod || 'Payment method'}
+                          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                            <option value="cash">{t.cash || 'Cash'}</option>
+                            <option value="bank_transfer">{t.bankTransfer || 'Bank transfer'}</option>
+                            <option value="upi">UPI</option>
+                            <option value="other">{t.other || 'Other'}</option>
+                          </select>
+                        </label>
+                        <label>
+                          {t.remarks || 'Remarks'}
+                          <input maxLength="500" value={paymentRemarks}
+                            onChange={(e) => setPaymentRemarks(e.target.value)} />
+                        </label>
+                      </div>
+                      <div className="form-actions">
+                        <button type="button" className="outline-button" onClick={cancelPayment}>{t.cancel}</button>
+                        <button className="primary-button">{t.recordPayment || 'Record payment'}</button>
+                      </div>
+                    </form>
+                  )}
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>{t.date}</th><th>{t.crop}</th><th>{t.activity}</th>
+                          <th>{t.days}</th><th>{t.dailyWage}</th><th>{t.earned || t.total}</th>
+                          <th>{t.paid || 'Paid'}</th><th>{t.remaining || 'Remaining'}</th><th>{t.action || 'Action'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {workerHistory.map(({ entry, a }) => (
+                          <React.Fragment key={a.id || `${entry.id}-${a.worker_id}`}>
+                            <tr>
+                              <td>{entry.work_date}</td>
+                              <td>{crops.find((c) => c.id === entry.crop_season_id)?.crop.name_en || '—'}</td>
+                              <td>{entry.activity?.name_en || '—'}</td>
+                              <td>{a.days}</td>
+                              <td>{currency(a.daily_wage_snapshot)}</td>
+                              <td><b>{currency(a.total_wage)}</b></td>
+                              <td>{currency(a.paid_amount)}</td>
+                              <td><b>{currency(Math.max(Number(a.total_wage || 0) - Number(a.paid_amount || 0), 0))}</b></td>
+                              <td>
+                                {Math.max(Number(a.total_wage || 0) - Number(a.paid_amount || 0), 0) > 0 ? (
+                                  <button type="button" className="outline-button small-button" onClick={() => openPayment(a)}>{t.pay || 'Pay'}</button>
+                                ) : <span className="notice" style={{margin:0,padding:'5px 8px'}}>{t.paid || 'Paid'}</span>}
+                              </td>
+                            </tr>
+                            {(a.payments || []).map((payment) => (
+                              <tr className="payment-history-row" key={`payment-${payment.id}`}>
+                                <td colSpan="2">{payment.payment_date}</td>
+                                <td>{payment.payment_method || 'cash'}</td>
+                                <td colSpan="2">{payment.remarks || (t.paymentHistory || 'Payment history')}</td>
+                                <td colSpan="4"><b>{currency(payment.amount)}</b></td>
+                              </tr>
+                            ))}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
             </div>
           )}

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, EmailStr,field_validator
+from pydantic import BaseModel, ConfigDict, Field, EmailStr, field_validator
 
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
@@ -191,6 +191,29 @@ class LabourEntryCreate(BaseModel):
         default=None,
         max_length=500,
     )
+class LabourPaymentCreate(BaseModel):
+    amount: float = Field(gt=0, le=100000000)
+    payment_date: date = Field(default_factory=date.today)
+    payment_method: str = Field(
+        default="cash",
+        min_length=1,
+        max_length=30,
+    )
+    remarks: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+class LabourPaymentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    labour_entry_worker_id: int
+    payment_date: date
+    amount: float
+    payment_method: str
+    remarks: str | None
+    created_at: datetime
+
 class LabourEntryUpdate(BaseModel):
     work_date: date
     days: float = Field(gt=0, le=365)
@@ -205,13 +228,21 @@ class LabourEntryUpdate(BaseModel):
     )
 
 class LabourWorkerAssignmentOut(BaseModel):
+    id: int
     worker_id: int | None
     worker_name_snapshot: str
     gender: str
     days: float
     daily_wage_snapshot: float
     total_wage: float
+
+    # Retained for compatibility with existing records.
+    paid_amount: float = 0
+
     is_unnamed: bool
+
+    # Individual payment history.
+    payments: list[LabourPaymentOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -230,7 +261,9 @@ class LabourEntryOut(BaseModel):
     total_wage: float
     notes: str | None
     activity: LabourActivityOut
-    worker_assignments: list[LabourWorkerAssignmentOut] = []
+    worker_assignments: list[LabourWorkerAssignmentOut] = Field(
+        default_factory=list
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
