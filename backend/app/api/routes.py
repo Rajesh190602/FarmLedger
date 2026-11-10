@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func,delete
 from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.exc import IntegrityError
 
@@ -230,13 +230,20 @@ def update_farm(
 
     return farm
 
+# ============================================================
+# DELETE FARM AND ALL ASSOCIATED RECORDS
+# ============================================================
 
-@router.delete("/farms/{farm_id}", status_code=204)
+@router.delete(
+    "/farms/{farm_id}",
+    status_code=204,
+)
 def delete_farm(
     farm_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # Verify ownership.
     farm = db.scalar(
         select(Farm).where(
             Farm.id == farm_id,
@@ -245,10 +252,152 @@ def delete_farm(
     )
 
     if not farm:
-        raise HTTPException(404, "Farm not found")
+        raise HTTPException(
+            404,
+            "Farm not found",
+        )
 
-    db.delete(farm)
-    db.commit()
+    try:
+        # ----------------------------------------------------
+        # 1. Find all crop seasons belonging to this farm.
+        # ----------------------------------------------------
+
+        season_ids = db.scalars(
+            select(CropSeason.id).where(
+                CropSeason.farm_id == farm.id,
+                CropSeason.owner_id == user.id,
+            )
+        ).all()
+
+        if season_ids:
+
+            # ------------------------------------------------
+            # 2. Find all labour entries for these seasons.
+            # ------------------------------------------------
+
+            entry_ids = db.scalars(
+                select(LabourEntry.id).where(
+                    LabourEntry.crop_season_id.in_(season_ids),
+                    LabourEntry.owner_id == user.id,
+                )
+            ).all()
+
+            if entry_ids:
+
+                # --------------------------------------------
+                # 3. Find all worker assignments.
+                # --------------------------------------------
+
+                assignment_ids = db.scalars(
+                    select(LabourEntryWorker.id).where(
+                        LabourEntryWorker.labour_entry_id.in_(
+                            entry_ids
+                        )
+                    )
+                ).all()
+
+                # --------------------------------------------
+                # 4. Delete all payment history.
+                # --------------------------------------------
+
+                if assignment_ids:
+                    db.execute(
+                        delete(LabourPayment).where(
+                            LabourPayment.labour_entry_worker_id.in_(
+                                assignment_ids
+                            )
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # 5. Delete worker assignments.
+                    # ----------------------------------------
+
+                    db.execute(
+                        delete(LabourEntryWorker).where(
+                            LabourEntryWorker.id.in_(
+                                assignment_ids
+                            )
+                        )
+                    )
+
+                # --------------------------------------------
+                # 6. Delete labour entries.
+                # --------------------------------------------
+
+                db.execute(
+                    delete(LabourEntry).where(
+                        LabourEntry.id.in_(entry_ids),
+                        LabourEntry.owner_id == user.id,
+                    )
+                )
+
+            # ------------------------------------------------
+            # 7. Delete crop yields.
+            # ------------------------------------------------
+
+            db.execute(
+                delete(CropYield).where(
+                    CropYield.crop_season_id.in_(season_ids),
+                    CropYield.owner_id == user.id,
+                )
+            )
+
+            # ------------------------------------------------
+            # 8. Delete farm expenses.
+            # ------------------------------------------------
+
+            db.execute(
+                delete(FarmExpense).where(
+                    FarmExpense.farm_id == farm.id,
+                    FarmExpense.owner_id == user.id,
+                )
+            )
+
+            # ------------------------------------------------
+            # 9. Delete crop sales.
+            # ------------------------------------------------
+
+            db.execute(
+                delete(CropSale).where(
+                    CropSale.farm_id == farm.id,
+                    CropSale.owner_id == user.id,
+                )
+            )
+
+            # ------------------------------------------------
+            # 10. Delete field operations.
+            # ------------------------------------------------
+
+            db.execute(
+                delete(FieldOperation).where(
+                    FieldOperation.farm_id == farm.id,
+                    FieldOperation.owner_id == user.id,
+                )
+            )
+
+            # ------------------------------------------------
+            # 11. Delete crop seasons.
+            # ------------------------------------------------
+
+            db.execute(
+                delete(CropSeason).where(
+                    CropSeason.id.in_(season_ids),
+                    CropSeason.owner_id == user.id,
+                )
+            )
+
+        # ----------------------------------------------------
+        # 12. Delete the farm.
+        # ----------------------------------------------------
+
+        db.delete(farm)
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ============================================================
@@ -1339,6 +1488,9 @@ def delete_wage_rate(
 # ============================================================
 # DELETE LABOUR ENTRY
 # ============================================================
+# ============================================================
+# DELETE LABOUR ENTRY AND ITS COMPLETE PAYMENT HISTORY
+# ============================================================
 
 @router.delete(
     "/labour/entries/{entry_id}",
@@ -1370,26 +1522,20 @@ def delete_labour_entry(
             "Labour entry not found",
         )
 
-    # Prevent accidental destruction of financial history.
-    has_payments = any(
-        assignment.payments
-        for assignment in entry.worker_assignments
-    )
-
-    if has_payments:
-        raise HTTPException(
-            400,
-            "This labour entry has payment history and cannot "
-            "be deleted. Preserve the financial records.",
-        )
-
     try:
+        # Delete payment history for this entry only.
         for assignment in list(entry.worker_assignments):
+            for payment in list(assignment.payments):
+                db.delete(payment)
+
+            # Delete this entry's worker assignment.
             db.delete(assignment)
 
         db.flush()
 
+        # Delete the selected labour entry.
         db.delete(entry)
+
         db.commit()
 
     except Exception:
